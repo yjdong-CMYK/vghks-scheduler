@@ -489,4 +489,315 @@ day_options = {
 # 取得假日
 holiday_dates = get_holiday_dates(days_dt)
 default_holidays = [d.isoformat() for d in holiday_dates]
-days = [d.isoformat
+days = [d.isoformat() for d in days_dt]
+
+selected_holidays = st.multiselect(
+    "假日設定（含周末及國定假日，可自行增減）",
+    options=day_options.keys(),
+    default=default_holidays,
+    format_func=lambda x: day_options[x],
+)
+
+# --- 輸入人員名單 ---
+people = st.text_area("人員名單（每行一人）", value="\n".join(default_people)).splitlines()
+
+# --- 自訂班別與人力需求 ---
+default_shift_requirements_df = pd.DataFrame(
+    [
+        {"shift": shift, "workday": val["workday"], "holiday": val["holiday"]}
+        for shift, val in default_shift_requirements.items()
+    ]
+)
+# 顯示並讓使用者可自訂須要幾個班, 各班的平日假日須要幾個人
+st.subheader("班別與人力需求")
+edited_shift_requirements_df = st.data_editor(
+    default_shift_requirements_df,
+    column_config={
+        "shift": st.column_config.TextColumn("班別"),
+        "workday": st.column_config.NumberColumn("平日上班人數", min_value=0, step=1),
+        "holiday": st.column_config.NumberColumn("假日上班人數", min_value=0, step=1),
+    },
+    num_rows="dynamic",
+)
+# 轉成 dictionary
+edited_shift_requirements_df["workday"] = (
+    edited_shift_requirements_df["workday"].fillna(0).astype(int)
+)
+edited_shift_requirements_df["holiday"] = (
+    edited_shift_requirements_df["holiday"].fillna(0).astype(int)
+)
+shift_requirements = edited_shift_requirements_df.set_index("shift").to_dict("index")
+shifts = list(shift_requirements.keys())
+
+# --- 規則設定 ---
+st.subheader("規則設定")
+only_last_first_shift = st.checkbox(
+    "特殊班別規則: 首日只排最後一班，最後一天只排第一班", value=False
+)
+if default_enable_custom_shift_limits:
+    default_schedule_mode_index = 0
+if default_evenly_distribute_total:
+    default_schedule_mode_index = 1
+schedule_mode = st.radio(
+    "排班模式",
+    ["自行設定個人班數", "系統平均分配各種班別"],
+    index=default_schedule_mode_index,
+)
+enable_custom_shift_limits = schedule_mode == "自行設定個人班數"
+evenly_distribute_total = schedule_mode == "系統平均分配各種班別"
+evenly_distribute_before_holiday_1 = False
+evenly_distribute_before_holiday_2 = False
+evenly_distribute_last_holiday = False
+if evenly_distribute_total:
+    evenly_distribute_before_holiday_1 = st.checkbox(
+        "平均分配假日前一天的值班次數(如週五班)", value = default_evenly_distribute_before_holiday_1,
+    )
+    evenly_distribute_before_holiday_2 = st.checkbox(
+        "平均分配假日前兩天的值班次數(如週四班)", value = default_evenly_distribute_before_holiday_2,
+    )
+    evenly_distribute_last_holiday = st.checkbox(
+        "平均分配最後一天假日的值班次數(如週日班)", value = default_evenly_distribute_last_holiday,
+    )
+min_gap_days = st.slider(
+    "同一人兩次排班的最小間隔天數，0相當於連續排班，1表示允許間隔一日(QOD)；以此類推",
+    min_value=0,
+    max_value=3,
+    value=default_min_gap_days,
+)
+# 跨日班種類限制
+st.subheader("設定不允許的跨日連班組合")
+disallowed_cross_day_pairs = []
+for i in range(st.session_state.cross_day_rows):
+    col1, col2 = st.columns(2)
+    try:
+        default_prev = st.session_state.disallowed_cross_day_pairs[i]["prev_shift"]
+        default_next_list = st.session_state.disallowed_cross_day_pairs[i]["next_shift"]
+    except:
+        default_prev, default_next_list = "", []
+    with col1:
+        prev_shift = st.selectbox(
+            f"第 {i+1} 列：前一天班別",
+            options=[""] + shifts,
+            index=([""] + shifts).index(default_prev) if default_prev in shifts else 0,
+            key=f"prev_shift_{i}",
+        )
+    with col2:
+        available_next_shifts = [s for s in shifts if s != prev_shift]
+        next_shift = st.multiselect(
+            f"隔天不能排的班別",
+            options=available_next_shifts,
+            default=[s for s in default_next_list if s in available_next_shifts],
+            key=f"next_shift_{i}",
+        )
+    if prev_shift and next_shift:
+        disallowed_cross_day_pairs.append(
+            {"prev_shift": prev_shift, "next_shift": next_shift}
+        )
+st.session_state.disallowed_cross_day_pairs = disallowed_cross_day_pairs
+
+if st.button("➕ 新增一組", key="add_disallowed_cross_day_pairs"):
+    st.session_state.cross_day_rows += 1
+    st.rerun()
+
+# 設定不同時排班
+st.subheader("設定某些人不同日排班")
+if "conflict_rows" not in st.session_state:
+    st.session_state.conflict_rows = 1
+if "conflict_dict" not in st.session_state:
+    st.session_state.conflict_dict = {}
+conflict_dict = st.session_state.conflict_dict
+used_people = set()
+for i in range(st.session_state.conflict_rows):
+    col1, col2 = st.columns([1, 2])
+    default_person = st.session_state.get(f"person_{i}", "")
+    default_enemies = st.session_state.get(f"enemies_{i}", [])
+    available_people = [
+        p for p in people if p not in used_people or p == default_person
+    ]
+    with col1:
+        person = st.selectbox(
+            f"成員 {i+1}",
+            options=[""] + available_people,
+            index=(
+                ([""] + available_people).index(default_person)
+                if default_person in available_people
+                else 0
+            ),
+            key=f"person_{i}",
+        )
+    with col2:
+        others = [p for p in people if p != person] if person else people
+        enemies = st.multiselect(
+            f"{person}不和以下成員同日排班",
+            options=others,
+            default=default_enemies,
+            key=f"enemies_{i}",
+        )
+    if person:
+        conflict_dict[person] = enemies
+        used_people.add(person)
+if st.button("➕ 新增一組", key="add_conflict_dict"):
+    st.session_state.conflict_rows += 1
+    st.rerun()
+
+# 結構化
+global_settings = {
+    "only_last_first_shift": only_last_first_shift,
+    "enable_custom_shift_limits": enable_custom_shift_limits,
+    "evenly_distribute_total": evenly_distribute_total,
+    "evenly_distribute_before_holiday_1": evenly_distribute_before_holiday_1,
+    "evenly_distribute_before_holiday_2": evenly_distribute_before_holiday_2,
+    "evenly_distribute_last_holiday": evenly_distribute_last_holiday,
+    "min_gap_days": min_gap_days,
+    "disallowed_cross_day_pairs": disallowed_cross_day_pairs,
+    "conflict_dict": conflict_dict,
+}
+
+# --- 個人客製化設定 ---
+# 初始化參數字典
+person_constraints = {}
+person_preferences = {}
+conflict_dict = {}
+for p in people:
+    st.subheader(f"個人設定：{p}")
+    # 可排班別
+    available_shifts = st.multiselect(
+        f"可排的班別", options=shifts, default=shifts, key=f"{p}_available_shifts"
+    )
+    if not available_shifts:
+        st.warning(f"{p} 尚未選擇任何可排班別，此人將不會被排入班表。")
+        continue
+    # 初始化結構
+    max_shifts_wd = {}
+    max_shifts_hd = {}
+    max_shifts_streak = {}
+    prefer_shifts_streak = {}
+    if not ((min_gap_days != 0) and evenly_distribute_total):
+        with st.expander("班數限制與偏好", expanded=True):
+            cols = st.columns(len(available_shifts))
+            for i, shift in enumerate(available_shifts):
+                with cols[i]:
+                    # 各班別的班數限制
+                    if enable_custom_shift_limits:
+                        wd = st.number_input(
+                            f"平日{shift}班數",
+                            min_value=0,
+                            value=4,
+                            key=f"{p}_wd_{shift}",
+                        )
+                        hd = st.number_input(
+                            f"假日{shift}班數",
+                            min_value=0,
+                            value=2,
+                            key=f"{p}_hd_{shift}",
+                        )
+                    else:
+                        wd, hd = None, None
+                    max_shifts_wd[shift] = wd
+                    max_shifts_hd[shift] = hd
+                    # 最多連上天數與偏好
+                    if min_gap_days == 0:
+                        shifts_streak_limit = st.number_input(
+                            f"最多連上幾天{shift}",
+                            min_value=1,
+                            value=3,
+                            key=f"{p}_limit_{shift}",
+                        )
+                        prefer = st.checkbox(
+                            f"偏好連續上{shift}", value=True, key=f"{p}_pref_{shift}"
+                        )
+                    else:
+                        shifts_streak_limit = 1
+                        prefer = False
+                    max_shifts_streak[shift] = shifts_streak_limit
+                    prefer_shifts_streak[shift] = prefer
+    # 偏好連休
+    prefer_rests_streak = st.checkbox(
+        f"偏好連休（班會變很密集）", value=False, key=f"{p}_pref_rest"
+    )
+    # 排班日 / 禁排日
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_dates = st.multiselect(
+            f"要預班的日期", days, key=f"select_available_date_{p}"
+        )
+        with st.expander("預班班別細項"):
+            prefer_shifts = []
+            for d in selected_dates:
+                selected_shifts = st.multiselect(
+                    f"{d}要預班的班別",
+                    shifts,
+                    default=shifts,
+                    key=f"{p}_{d}_shifts",
+                )
+                for s in selected_shifts:
+                    prefer_shifts.append({"date": d, "shift": s})
+    with col2:
+        selected_dates = st.multiselect(
+            f"要預假的日期", days, key=f"select_unavailable_date_{p}"
+        )
+        with st.expander("預假班別細項"):
+            prefer_no_shifts = []
+            for d in selected_dates:
+                selected_shifts = st.multiselect(
+                    f"{d}要預假的班別",
+                    shifts,
+                    default=shifts,
+                    key=f"{p}_{d}_shifts",
+                )
+                for s in selected_shifts:
+                    prefer_no_shifts.append({"date": d, "shift": s})
+    # 結構化
+    person_constraints[p] = {
+        "available_shifts": available_shifts,
+        "max_shifts": {
+            "workday": max_shifts_wd,
+            "holiday": max_shifts_hd,
+        },
+        "max_shifts_streak": max_shifts_streak,
+        "prefer_shifts": prefer_shifts,
+        "prefer_no_shifts": prefer_no_shifts,
+    }
+    person_preferences[p] = {
+        "prefer_shifts_streak": prefer_shifts_streak,
+        "prefer_rests_streak": prefer_rests_streak,
+    }
+
+if st.button("產生班表"):
+    input_data = {
+        "days": days,
+        "people": people,
+        "selected_holidays": selected_holidays,
+        "shift_requirements": shift_requirements,
+        "global_settings": global_settings,
+        "person_constraints": person_constraints,
+        "person_preferences": person_preferences,
+    }
+    #st.write(f"input_data = {input_data}") #顯示參數
+    model, assignment = build_model(**input_data)
+    solver, status = solve_schedule(model, max_time=5)
+
+    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+        st.success("成功產生班表")
+        df1, df2, df3 = extract_schedule(
+            solver, assignment, days, shifts, people, selected_holidays
+        )
+
+        # 假日欄位背景色
+        def highlight_holidays(row):
+            return [
+                "background-color: lightgrey" if col in selected_holidays else ""
+                for col in row.index
+            ]
+
+        st.subheader("以人員為主視角")
+        st.dataframe(df1.style.apply(lambda x: highlight_holidays(x), axis=1))
+
+        st.subheader("以班別為主視角")
+        st.dataframe(df2.style.apply(lambda x: highlight_holidays(x), axis=1))
+
+        st.subheader("班數統計")
+        st.dataframe(df3)
+
+    else:
+        st.error("無法找到可行解，請修改條件")
