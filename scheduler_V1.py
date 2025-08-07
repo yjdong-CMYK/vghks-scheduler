@@ -415,10 +415,7 @@ default_templates = {
             "evenly_distribute_before_holiday_2": False,
             "evenly_distribute_last_holiday": False,
             "min_gap_days": 0,
-            "disallowed_cross_day_pairs": [
-                {"prev_shift": "夜班", "next_shift": "白班"},
-                {"prev_shift": "白班", "next_shift": "夜班"},
-            ],
+            "disallowed_cross_day_pairs": [],
         },
     },
     "病房": {
