@@ -320,10 +320,9 @@ def build_model(
         if person_preferences.get(p, {}).get("rest_at_least_2_days", False):
           for i in range(len(days)):
               if 0 < i < len(days) - 1:
-              prev_rest = is_rest[(p, days[i-1])]
-              next_rest = is_rest[(p, days[i+1])]
-              model.AddBoolOr([prev_rest, next_rest]).OnlyEnforceIf(is_rest[(p, days[i])])
-
+                  prev_rest = is_rest[(p, days[i-1])]
+                  next_rest = is_rest[(p, days[i+1])]
+                  model.AddBoolOr([prev_rest, next_rest]).OnlyEnforceIf(is_rest[(p, days[i])])
 
     weights = {
         "assignment": 10**3,
