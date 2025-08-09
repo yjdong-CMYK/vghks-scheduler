@@ -229,8 +229,8 @@ def build_model(
                 d1, d2 = days[i], days[i + 1]
                 for pair in disallowed_cross_day_pairs:
                     prev_shift = pair["prev_shift"]
-                    next_shift = pair["next_shift"]
-                    for next_shift in next_shift:
+                    next_shifts = pair["next_shift"]
+                    for next_shift in next_shifts:
                         var1 = assignment[(p, d1, prev_shift)]
                         var2 = assignment[(p, d2, next_shift)]
                         model.Add(var1 + var2 <= 1)
@@ -296,15 +296,16 @@ def build_model(
 
         # --- person_preferences --- #
         # person_preferences: prefer_shifts_streak 偏好連續上班，鼓勵性質
-        if person_preferences.get(p, {}).get("prefer_shifts_streak", {}):
-            for i in range(len(days) - 1):
-                d1, d2 = days[i], days[i + 1]
-                var1 = shift_count_by_person_day[(p, d1)]
-                var2 = shift_count_by_person_day[(p, d2)]
-                both_on = model.NewBoolVar(f"{p}_{s}_streak_{d1}_{d2}")
-                model.AddBoolAnd([var1, var2]).OnlyEnforceIf(both_on)
-                model.AddBoolOr([var1.Not(), var2.Not()]).OnlyEnforceIf(both_on.Not())
-                preference_terms.append(both_on)
+        if person_preferences.get(p, {}).get("prefer_shifts_streak", False):
+            for s in shifts:
+                for i in range(len(days) - 1):
+                    d1, d2 = days[i], days[i + 1]
+                    var1 = assignment[(p, d1, s)]
+                    var2 = assignment[(p, d2, s)]
+                    both_on = model.NewBoolVar(f"{p}_{s}_streak_{d1}_{d2}")
+                    model.AddBoolAnd([var1, var2]).OnlyEnforceIf(both_on)
+                    model.AddBoolOr([var1.Not(), var2.Not()]).OnlyEnforceIf(both_on.Not())
+                    preference_terms.append(both_on)
 
         # person_preferences: prefer_rests_streak 偏好連續放假，鼓勵性質
         if person_preferences.get(p, {}).get("prefer_rests_streak", False):
@@ -409,8 +410,8 @@ default_templates = {
             "evenly_distribute_last_holiday": False,
             "min_gap_days": 0,
             "disallowed_cross_day_pairs": [
-                {"prev_shift": "夜班", "next_shift": "白班"},
-                {"prev_shift": "白班", "next_shift": "夜班"},
+                {"prev_shift": "夜班", "next_shift": ["白班"]},
+                {"prev_shift": "白班", "next_shift": ["夜班"]},
             ],
         },
     },
@@ -775,7 +776,7 @@ if st.button("產生班表"):
         "person_constraints": person_constraints,
         "person_preferences": person_preferences,
     }
-    #st.write(f"input_data = {input_data}") #顯示參數
+    st.write(f"input_data = {input_data}") #顯示參數
     model, assignment = build_model(**input_data)
     solver, status = solve_schedule(model, max_time=5)
 
