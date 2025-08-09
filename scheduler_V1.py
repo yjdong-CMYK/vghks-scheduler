@@ -112,6 +112,10 @@ def build_model(
     # global_settings: evenly_distribute_before_holiday_1 鼓勵平均分配每個人假日前一天的值班的次數
     # global_settings: evenly_distribute_before_holiday_2 鼓勵平均分配每個人假日前兩天的值班的次數
     # global_settings: evenly_distribute_last_holiday 平均分配最後一天假日的值班次數
+    
+    # 收集所有偏差變數
+    total_shift_balance_vars  = []
+    holiday_adjacent_balance_vars = []
     if any(
         [
             global_settings.get("evenly_distribute_total", False),
@@ -164,10 +168,6 @@ def build_model(
         avg_before_1 = total_before_1 // len(people)
         avg_before_2 = total_before_2 // len(people)
         avg_last = total_last_holiday // len(people)
-
-        # 收集所有偏差變數
-        total_shift_balance_vars  = []
-        holiday_adjacent_balance_vars = []
 
         # 為每個人建立偏差變數
         for p in people:
