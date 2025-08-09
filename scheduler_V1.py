@@ -334,8 +334,8 @@ def build_model(
 
     model.Maximize(
         weights["assignment"] * sum(assignment.values())
-        - （weights["total_shift_balance"] / scale） * sum(total_shift_balance_vars)
-        - （weights["holiday_adjacent_balance"] / scale） * sum(holiday_adjacent_balance_vars)
+        - (weights["total_shift_balance"] / scale) * sum(total_shift_balance_vars)
+        - (weights["holiday_adjacent_balance"] / scale) * sum(holiday_adjacent_balance_vars)
         + weights["preference_terms"] * sum(preference_terms)
     )
     return model, assignment
