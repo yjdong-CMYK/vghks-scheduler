@@ -161,33 +161,34 @@ def build_model(
         total_last_holiday = sum(
             shift_requirements[s]["holiday"] * len(last_holidays) for s in shifts
         )
-
-        avg_workday = total_workday_shifts // len(people)
-        avg_holiday = total_holiday_shifts // len(people)
-        avg_total = total_shifts // len(people)
-        avg_before_1 = total_before_1 // len(people)
-        avg_before_2 = total_before_2 // len(people)
-        avg_last = total_last_holiday // len(people)
+        
+        scale = 100
+        avg_workday = total_workday_shifts * scale // len(people)
+        avg_holiday = total_holiday_shifts * scale // len(people)
+        avg_total = total_shifts * scale // len(people)
+        avg_before_1 = total_before_1 * scale // len(people)
+        avg_before_2 = total_before_2 * scale // len(people)
+        avg_last = total_last_holiday * scale // len(people)
 
         # 為每個人建立偏差變數
         for p in people:
             # ---------- evenly_distribute_total 相關 ----------
             if global_settings.get("evenly_distribute_total", False):
                 # 平日總班數偏差
-                workday_sum = sum(shift_count_by_person_day[(p, d)] for d in workdays)
-                dev_workday = model.NewIntVar(0, total_workday_shifts, f"dev_workday_{p}")
+                workday_sum = sum(shift_count_by_person_day[(p, d)] for d in workdays) * scale
+                dev_workday = model.NewIntVar(0, total_workday_shifts * scale, f"dev_workday_{p}")
                 model.AddAbsEquality(dev_workday, workday_sum - avg_workday)
                 total_shift_balance_vars.append(dev_workday)
 
                 # 假日總班數偏差
-                holiday_sum = sum(shift_count_by_person_day[(p, d)] for d in holidays)
-                dev_holiday = model.NewIntVar(0, total_holiday_shifts, f"dev_holiday_{p}")
+                holiday_sum = sum(shift_count_by_person_day[(p, d)] for d in holidays) * scale
+                dev_holiday = model.NewIntVar(0, total_holiday_shifts * scale, f"dev_holiday_{p}")
                 model.AddAbsEquality(dev_holiday, holiday_sum - avg_holiday)
                 total_shift_balance_vars.append(dev_holiday)
 
                 # 總班數偏差
-                total_sum = sum(shift_count_by_person_day[(p, d)] for d in days)
-                dev_total = model.NewIntVar(0, total_shifts, f"dev_total_{p}")
+                total_sum = sum(shift_count_by_person_day[(p, d)] for d in days) * scale
+                dev_total = model.NewIntVar(0, total_shifts * scale, f"dev_total_{p}")
                 model.AddAbsEquality(dev_total, total_sum - avg_total)
                 total_shift_balance_vars.append(dev_total)
 
@@ -197,28 +198,28 @@ def build_model(
                         total_shift = shift_requirements[s][d_type] * len(d_list)
                         if total_shift == 0:
                             continue
-                        avg_shift = total_shift // len(people)
-                        count = sum(assignment[(p, d, s)] for d in d_list)
+                        avg_shift = total_shift * scale // len(people)
+                        count = sum(assignment[(p, d, s)] for d in d_list) * scale
                         dev_shift = model.NewIntVar(0, total_shift, f"dev_{p}_{s}_{d_type}")
                         model.AddAbsEquality(dev_shift, count - avg_shift)
                         total_shift_balance_vars.append(dev_shift)
 
             # ---------- before_holiday / last_holiday 相關（作為可選次要偏差） ----------
             if global_settings.get("evenly_distribute_before_holiday_1", False):
-                b1_sum = sum(shift_count_by_person_day[(p, d)] for d in before_holiday_1)
-                dev_b1 = model.NewIntVar(0, total_before_1, f"dev_b1_{p}")
+                b1_sum = sum(shift_count_by_person_day[(p, d)] for d in before_holiday_1) * scale
+                dev_b1 = model.NewIntVar(0, total_before_1 * scale, f"dev_b1_{p}")
                 model.AddAbsEquality(dev_b1, b1_sum - avg_before_1)
                 holiday_adjacent_balance_vars.append(dev_b1)
 
             if global_settings.get("evenly_distribute_before_holiday_2", False):
-                b2_sum = sum(shift_count_by_person_day[(p, d)] for d in before_holiday_2)
-                dev_b2 = model.NewIntVar(0, total_before_2, f"dev_b2_{p}")
+                b2_sum = sum(shift_count_by_person_day[(p, d)] for d in before_holiday_2) * scale
+                dev_b2 = model.NewIntVar(0, total_before_2 * scale, f"dev_b2_{p}")
                 model.AddAbsEquality(dev_b2, b2_sum - avg_before_2)
                 holiday_adjacent_balance_vars.append(dev_b2)
 
             if global_settings.get("evenly_distribute_last_holiday", False):
-                last_sum = sum(shift_count_by_person_day[(p, d)] for d in last_holidays)
-                dev_last = model.NewIntVar(0, max(1, total_last_holiday), f"dev_last_{p}")
+                last_sum = sum(shift_count_by_person_day[(p, d)] for d in last_holidays) * scale
+                dev_last = model.NewIntVar(0, total_last_holiday * scale, f"dev_last_{p}")
                 model.AddAbsEquality(dev_last, last_sum - avg_last)
                 holiday_adjacent_balance_vars.append(dev_last)
 
@@ -333,8 +334,8 @@ def build_model(
 
     model.Maximize(
         weights["assignment"] * sum(assignment.values())
-        - weights["total_shift_balance"] * sum(total_shift_balance_vars)
-        - weights["holiday_adjacent_balance"] * sum(holiday_adjacent_balance_vars)
+        - weights["total_shift_balance"] * sum(total_shift_balance_vars) / scale
+        - weights["holiday_adjacent_balance"] * sum(holiday_adjacent_balance_vars) / scale
         + weights["preference_terms"] * sum(preference_terms)
     )
     return model, assignment
@@ -787,7 +788,7 @@ if st.button("產生班表"):
         # 假日欄位背景色
         def highlight_holidays(row):
             return [
-                "background-color: lightgrey" if col in selected_holidays else ""
+                "background-color: grey" if col in selected_holidays else ""
                 for col in row.index
             ]
 
