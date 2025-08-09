@@ -49,26 +49,10 @@ def build_model(
             for s in shifts:
                 assignment[(p, d, s)] = model.NewBoolVar(f"{p}_{d}_{s}")
 
-    # 預先建立是否上班
-    shift_count_by_person_day = {
-        (p, d): sum(assignment[(p, d, s)] for s in shifts)
-        for p in people
-        for d in days
-    }
-
-    # 預先建立是否休假
-    is_rest = {}
-    for p in people:
-        for d in days:
-            var = model.NewBoolVar(f"{p}_rest_{d}")
-            model.Add(shift_count_by_person_day[(p, d)] == 0).OnlyEnforceIf(var)
-            model.Add(shift_count_by_person_day[(p, d)] != 0).OnlyEnforceIf(var.Not())
-            is_rest[(p, d)] = var
-
     # 基本限制：一個人一天最多只能上一班
     for p in people:
         for d in days:
-            model.Add(shift_count_by_person_day[(p, d)] <= 1)
+            model.Add(sum(assignment[(p, d, s)] for s in shifts) <= 1)
 
     # shift_requirements：每日各班別最多幾人上班
     for d in days:
@@ -92,6 +76,7 @@ def build_model(
         last_day = days[-1]
         first_shift = shifts[0]
         last_shift = shifts[-1]
+
         for p in people:
             for s in shifts:
                 # 限制第一天除了最後一班外不得排班
@@ -103,19 +88,22 @@ def build_model(
 
     # global_settings: min_gap_days 最短值班間隔天數，0相當於連續值班，1相當於QOD，以此類推
     if min_gap_days > 0:
+        day_indices = {day: i for i, day in enumerate(days)}  # 幫助快速查找索引
         for p in people:
             for i, d1 in enumerate(days):
-                for d2 in days[i+1 : i + min_gap_days + 1]:
-                    model.Add(shift_count_by_person_day[(p, d1)] + shift_count_by_person_day[(p, d2)] <= 1)
+                for s1 in shifts:
+                    var1 = assignment[(p, d1, s1)]
+                    for offset in range(1, min_gap_days + 1):
+                        if i + offset < len(days):
+                            d2 = days[i + offset]
+                            for s2 in shifts:
+                                var2 = assignment[(p, d2, s2)]
+                                model.Add(var1 + var2 <= 1)
 
     # global_settings: evenly_distribute_total 鼓勵平均分配每個人的班數(包含平日假日及班別)
     # global_settings: evenly_distribute_before_holiday_1 鼓勵平均分配每個人假日前一天的值班的次數
     # global_settings: evenly_distribute_before_holiday_2 鼓勵平均分配每個人假日前兩天的值班的次數
     # global_settings: evenly_distribute_last_holiday 平均分配最後一天假日的值班次數
-    
-    # 收集所有偏差變數
-    total_shift_balance_vars  = []
-    holiday_adjacent_balance_vars = []
     if any(
         [
             global_settings.get("evenly_distribute_total", False),
@@ -141,7 +129,7 @@ def build_model(
         holidays_dates = [datetime.fromisoformat(d).date() for d in holidays]
         workdays_dates = [datetime.fromisoformat(d).date() for d in workdays]
         last_holidays = {
-            d.isoformat() for d in holidays_dates if (d + timedelta(days=1)) in workdays_dates
+            d for d in holidays_dates if (d + timedelta(days=1)) in workdays_dates
         }
 
         # 各類總班數與平均
@@ -161,66 +149,92 @@ def build_model(
         total_last_holiday = sum(
             shift_requirements[s]["holiday"] * len(last_holidays) for s in shifts
         )
+        max_delta = 1  # 可允許的偏差班數
+        if total_workday_shifts % len(people) == 0:
+            avg_workday = total_workday_shifts // len(people)
+        else:
+            avg_workday = total_workday_shifts // len(people) + max_delta
+        if total_holiday_shifts % len(people) == 0:
+            avg_holiday = total_holiday_shifts // len(people)
+        else:
+            avg_holiday = total_holiday_shifts // len(people) + max_delta
+        if total_shifts % len(people) == 0:
+            avg_total = total_shifts // len(people)
+        else:
+            avg_total = total_shifts // len(people) + max_delta
+        if total_before_1 % len(people) == 0:
+            avg_before_1 = total_before_1 // len(people)
+        else:
+            avg_before_1 = total_before_1 // len(people) + max_delta
+        if total_before_2 % len(people) == 0:
+            avg_before_2 = total_before_2 // len(people)
+        else:
+            avg_before_2 = total_before_2 // len(people) + max_delta
+        if total_last_holiday % len(people) == 0:
+            avg_last = total_last_holiday // len(people)
+        else:
+            avg_last = total_last_holiday // len(people) + max_delta
 
-        avg_workday = total_workday_shifts // len(people)
-        avg_holiday = total_holiday_shifts // len(people)
-        avg_total = total_shifts // len(people)
-        avg_before_1 = total_before_1 // len(people)
-        avg_before_2 = total_before_2 // len(people)
-        avg_last = total_last_holiday // len(people)
-
-        # 為每個人建立偏差變數
+        # 個人計算
         for p in people:
-            # ---------- evenly_distribute_total 相關 ----------
             if global_settings.get("evenly_distribute_total", False):
-                # 平日總班數偏差
-                workday_sum = sum(shift_count_by_person_day[(p, d)] for d in workdays)
-                dev_workday = model.NewIntVar(0, total_workday_shifts, f"dev_workday_{p}")
-                model.AddAbsEquality(dev_workday, workday_sum - avg_workday)
-                total_shift_balance_vars.append(dev_workday)
-
-                # 假日總班數偏差
-                holiday_sum = sum(shift_count_by_person_day[(p, d)] for d in holidays)
-                dev_holiday = model.NewIntVar(0, total_holiday_shifts, f"dev_holiday_{p}")
-                model.AddAbsEquality(dev_holiday, holiday_sum - avg_holiday)
-                total_shift_balance_vars.append(dev_holiday)
-
-                # 總班數偏差
-                total_sum = sum(shift_count_by_person_day[(p, d)] for d in days)
-                dev_total = model.NewIntVar(0, total_shifts, f"dev_total_{p}")
-                model.AddAbsEquality(dev_total, total_sum - avg_total)
-                total_shift_balance_vars.append(dev_total)
-
-                # 各班別在平日/假日的偏差
+                # 平日
+                workday_sum = sum(
+                    assignment[(p, d, s)] for d in workdays for s in shifts
+                )
+                model.Add(workday_sum <= avg_workday)
+                # 假日
+                holiday_sum = sum(
+                    assignment[(p, d, s)] for d in holidays for s in shifts
+                )
+                model.Add(holiday_sum <= avg_holiday)
+                # 總班數
+                total_sum = sum(assignment[(p, d, s)] for d in days for s in shifts)
+                model.Add(total_sum <= avg_total)
+                # 各班別平均
                 for s in shifts:
-                    for d_type, d_list in [("workday", workdays), ("holiday", holidays)]:
+                    for d_type, d_list in [
+                        ("workday", workdays),
+                        ("holiday", holidays),
+                    ]:
                         total_shift = shift_requirements[s][d_type] * len(d_list)
                         if total_shift == 0:
-                            continue
-                        avg_shift = total_shift // len(people)
-                        count = sum(assignment[(p, d, s)] for d in d_list)
-                        dev_shift = model.NewIntVar(0, total_shift, f"dev_{p}_{s}_{d_type}")
-                        model.AddAbsEquality(dev_shift, count - avg_shift)
-                        total_shift_balance_vars.append(dev_shift)
+                            continue  # 該班在這類日子不上班，跳過
+                        if total_shift % len(people) == 0:
+                            avg = total_shift // len(people)
+                        else:
+                            avg = total_shift // len(people) + max_delta
 
-            # ---------- before_holiday / last_holiday 相關（作為可選次要偏差） ----------
+                        count = sum(
+                            assignment[(p, d, s)]
+                            for d in d_list
+                            if shift_requirements[s][d_type] > 0
+                        )
+                        model.Add(count <= avg)
+                        model.Add(count >= avg - max_delta)
+
             if global_settings.get("evenly_distribute_before_holiday_1", False):
-                b1_sum = sum(shift_count_by_person_day[(p, d)] for d in before_holiday_1)
-                dev_b1 = model.NewIntVar(0, total_before_1, f"dev_b1_{p}")
-                model.AddAbsEquality(dev_b1, b1_sum - avg_before_1)
-                holiday_adjacent_balance_vars.append(dev_b1)
+                b1_sum = sum(
+                    assignment[(p, d, s)] for d in before_holiday_1 for s in shifts
+                )
+                model.Add(b1_sum <= avg_before_1)
+                model.Add(b1_sum >= avg_before_1 - max_delta)
 
             if global_settings.get("evenly_distribute_before_holiday_2", False):
-                b2_sum = sum(shift_count_by_person_day[(p, d)] for d in before_holiday_2)
-                dev_b2 = model.NewIntVar(0, total_before_2, f"dev_b2_{p}")
-                model.AddAbsEquality(dev_b2, b2_sum - avg_before_2)
-                holiday_adjacent_balance_vars.append(dev_b2)
+                b2_sum = sum(
+                    assignment[(p, d, s)] for d in before_holiday_2 for s in shifts
+                )
+                model.Add(b2_sum <= avg_before_2)
+                model.Add(b2_sum >= avg_before_2 - max_delta)
 
             if global_settings.get("evenly_distribute_last_holiday", False):
-                last_sum = sum(shift_count_by_person_day[(p, d)] for d in last_holidays)
-                dev_last = model.NewIntVar(0, max(1, total_last_holiday), f"dev_last_{p}")
-                model.AddAbsEquality(dev_last, last_sum - avg_last)
-                holiday_adjacent_balance_vars.append(dev_last)
+                last_sum = sum(
+                    assignment[(p, d.isoformat(), s)]
+                    for d in last_holidays
+                    for s in shifts
+                )
+                model.Add(last_sum <= avg_last)
+                model.Add(last_sum >= avg_last - max_delta)
 
     # global_settings: disallowed_cross_day_pairs 設定甚麼班隔天不能接甚麼班，例如夜班隔天不能接白班
     if global_settings.get("disallowed_cross_day_pairs", []):
@@ -229,8 +243,8 @@ def build_model(
                 d1, d2 = days[i], days[i + 1]
                 for pair in disallowed_cross_day_pairs:
                     prev_shift = pair["prev_shift"]
-                    next_shifts = pair["next_shift"]
-                    for next_shift in next_shifts:
+                    next_shift = pair["next_shift"]
+                    for next_shift in next_shift:
                         var1 = assignment[(p, d1, prev_shift)]
                         var2 = assignment[(p, d2, next_shift)]
                         model.Add(var1 + var2 <= 1)
@@ -243,8 +257,8 @@ def build_model(
             for pair in conflict_pairs:
                 p1 = pair["person1"]
                 p2 = pair["person2"]
-                p1_vars = shift_count_by_person_day[(p1, d)]
-                p2_vars = shift_count_by_person_day[(p2, d)]
+                p1_vars = sum([assignment[(p1, d, s)] for s in shifts])
+                p2_vars = sum([assignment[(p2, d, s)] for s in shifts])
                 model.Add(p1_vars + p2_vars <= 1)
 
     # --- person_constraints --- #
@@ -256,7 +270,6 @@ def build_model(
             for s in shifts:
                 if allowed is None or s not in allowed:
                     model.Add(assignment[(p, d, s)] == 0)
-
         # person_constraints: max_shifts 個人平日假日不同班別的排班數上限
         max_shifts = person_constraints.get(p, {}).get("max_shifts", {})
         for period, selected_days in [("workday", workdays), ("holiday", holidays)]:
@@ -265,7 +278,6 @@ def build_model(
                 if max_count is not None:
                     relevant_vars = [assignment[(p, d, s)] for d in selected_days]
                     model.Add(sum(relevant_vars) == max_count)
-
         # person_constraints: max_shifts_streak 最多連上天
         streak_limit = person_constraints.get(p, {}).get("max_shifts_streak", {})
         if not streak_limit:
@@ -278,25 +290,22 @@ def build_model(
                 window = days[i : i + max_streak + 1]
                 vars_in_window = [assignment[(p, d, s)] for d in window]
                 model.Add(sum(vars_in_window) <= max_streak)
-
         # person_constraints: prefer_no_shifts 那天不能上班，硬性不能排班
         no_pref_list = person_constraints.get(p, {}).get("prefer_no_shifts", [])
         for item in no_pref_list:
             d = item["date"]
-            no_pref_shifts = item["shift"]
-            for s in no_pref_shifts:
-                model.Add(assignment[(p, d, s)] == 0)
-
-        # person_constraints: prefer_shifts 那個班要上班，確保該日會有一班
+            s = item["shift"]
+            model.Add(assignment[(p, d, s)] == 0)
+        # person_constraints: prefer_shifts 那個班要上班，硬性排入
         pref_list = person_constraints.get(p, {}).get("prefer_shifts", [])
         for item in pref_list:
             d = item["date"]
-            pref_shifts = item["shift"]
-            model.Add(sum(assignment[(p, d, s)] for s in pref_shifts) == 1)
+            s = item["shift"]
+            model.Add(assignment[(p, d, s)] == 1)
 
         # --- person_preferences --- #
         # person_preferences: prefer_shifts_streak 偏好連續上班，鼓勵性質
-        if person_preferences.get(p, {}).get("prefer_shifts_streak", False):
+        if person_preferences.get(p, {}).get("prefer_shifts_streak", {}):
             for s in shifts:
                 for i in range(len(days) - 1):
                     d1, d2 = days[i], days[i + 1]
@@ -304,39 +313,38 @@ def build_model(
                     var2 = assignment[(p, d2, s)]
                     both_on = model.NewBoolVar(f"{p}_{s}_streak_{d1}_{d2}")
                     model.AddBoolAnd([var1, var2]).OnlyEnforceIf(both_on)
-                    model.AddBoolOr([var1.Not(), var2.Not()]).OnlyEnforceIf(both_on.Not())
+                    model.AddBoolOr([var1.Not(), var2.Not()]).OnlyEnforceIf(
+                        both_on.Not()
+                    )
                     preference_terms.append(both_on)
-
         # person_preferences: prefer_rests_streak 偏好連續放假，鼓勵性質
         if person_preferences.get(p, {}).get("prefer_rests_streak", False):
             for i in range(len(days) - 1):
                 d1, d2 = days[i], days[i + 1]
+                not_working_d1 = model.NewBoolVar(f"{p}_rest_{d1}")
+                not_working_d2 = model.NewBoolVar(f"{p}_rest_{d2}")
+                model.Add(
+                    sum([assignment[(p, d1, s)] for s in shifts]) == 0
+                ).OnlyEnforceIf(not_working_d1)
+                model.Add(
+                    sum([assignment[(p, d1, s)] for s in shifts]) != 0
+                ).OnlyEnforceIf(not_working_d1.Not())
+                model.Add(
+                    sum([assignment[(p, d2, s)] for s in shifts]) == 0
+                ).OnlyEnforceIf(not_working_d2)
+                model.Add(
+                    sum([assignment[(p, d2, s)] for s in shifts]) != 0
+                ).OnlyEnforceIf(not_working_d2.Not())
                 both_rest = model.NewBoolVar(f"{p}_rest_streak_{d1}_{d2}")
-                model.AddBoolAnd([is_rest[(p, d1)], is_rest[(p, d2)]]).OnlyEnforceIf(both_rest)
-                model.AddBoolOr([is_rest[(p, d1)].Not(), is_rest[(p, d2)].Not()]).OnlyEnforceIf(both_rest.Not())
+                model.AddBoolAnd([not_working_d1, not_working_d2]).OnlyEnforceIf(
+                    both_rest
+                )
+                model.AddBoolOr(
+                    [not_working_d1.Not(), not_working_d2.Not()]
+                ).OnlyEnforceIf(both_rest.Not())
                 preference_terms.append(both_rest)
 
-        # person_preferences：rest_at_least_2_days 休假至少連續兩天，忽略月初月底
-        if person_preferences.get(p, {}).get("rest_at_least_2_days", False):
-          for i in range(len(days)):
-              if 0 < i < len(days) - 1:
-                  prev_rest = is_rest[(p, days[i-1])]
-                  next_rest = is_rest[(p, days[i+1])]
-                  model.AddBoolOr([prev_rest, next_rest]).OnlyEnforceIf(is_rest[(p, days[i])])
-
-    weights = {
-        "assignment": 10**3,
-        "total_shift_balance": 10**2,
-        "holiday_adjacent_balance": 10**1,
-        "preference_terms": 10**0,
-    }
-
-    model.Maximize(
-        weights["assignment"] * sum(assignment.values())
-        - weights["total_shift_balance"] * sum(total_shift_balance_vars)
-        - weights["holiday_adjacent_balance"] * sum(holiday_adjacent_balance_vars)
-        + weights["preference_terms"] * sum(preference_terms)
-    )
+    model.Maximize(sum(preference_terms))
     return model, assignment
 
 
@@ -408,8 +416,8 @@ default_templates = {
             "evenly_distribute_last_holiday": False,
             "min_gap_days": 0,
             "disallowed_cross_day_pairs": [
-                {"prev_shift": "夜班", "next_shift": ["白班"]},
-                {"prev_shift": "白班", "next_shift": ["夜班"]},
+                {"prev_shift": "夜班", "next_shift": "白班"},
+                {"prev_shift": "白班", "next_shift": "夜班"},
             ],
         },
     },
@@ -454,7 +462,7 @@ default_disallowed_cross_day_pairs = template["global_settings"]["disallowed_cro
 if st.session_state.get("template_name") != selected_template_name:
     st.session_state.template_name = selected_template_name
     st.session_state.disallowed_cross_day_pairs = template["global_settings"]["disallowed_cross_day_pairs"].copy()
-    st.session_state.cross_day_rows = len(st.session_state.disallowed_cross_day_pairs)
+    st.session_state.cross_day_rows = len(st.session_state.disallowed_cross_day_pairs) + 1
 
 
 #  --- 自訂時間範圍 ---
@@ -474,15 +482,12 @@ start_date, end_date = st.date_input(
 days_dt = [
     start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)
 ]
-days_add_7_dt = [
-    start_date + timedelta(days=i) for i in range((end_date - start_date).days + 8)
-]
 # 建立 ISO 日期與顯示字串的對應
 day_options = {
-    d.isoformat(): f"{d.isoformat()}({weekday_map[d.weekday()]}）" for d in days_add_7_dt
+    d.isoformat(): f"{d.isoformat()}（{weekday_map[d.weekday()]}）" for d in days_dt
 }
 # 取得假日
-holiday_dates = get_holiday_dates(days_add_7_dt)
+holiday_dates = get_holiday_dates(days_dt)
 default_holidays = [d.isoformat() for d in holiday_dates]
 days = [d.isoformat() for d in days_dt]
 
@@ -631,9 +636,6 @@ for i in range(st.session_state.conflict_rows):
     if person:
         conflict_dict[person] = enemies
         used_people.add(person)
-    else:
-        # 如果person欄位是空白，移除舊資料
-        conflict_dict.pop(default_person, None)
 if st.button("➕ 新增一組", key="add_conflict_dict"):
     st.session_state.conflict_rows += 1
     st.rerun()
@@ -711,11 +713,7 @@ for p in people:
                     prefer_shifts_streak[shift] = prefer
     # 偏好連休
     prefer_rests_streak = st.checkbox(
-        f"偏好連休（班會變密集）", value=True, key=f"{p}_pref_rest"
-    )
-    # 休假至少連續兩天
-    rest_at_least_2_days = st.checkbox(
-        f"休假至少連續兩天", value=True, key=f"{p}_rest_2_days"
+        f"偏好連休（班會變很密集）", value=False, key=f"{p}_pref_rest"
     )
     # 排班日 / 禁排日
     col1, col2 = st.columns(2)
@@ -761,7 +759,6 @@ for p in people:
     person_preferences[p] = {
         "prefer_shifts_streak": prefer_shifts_streak,
         "prefer_rests_streak": prefer_rests_streak,
-        "rest_at_least_2_days": rest_at_least_2_days,
     }
 
 if st.button("產生班表"):
@@ -774,7 +771,7 @@ if st.button("產生班表"):
         "person_constraints": person_constraints,
         "person_preferences": person_preferences,
     }
-    st.write(f"input_data = {input_data}") #顯示參數
+    #st.write(f"input_data = {input_data}") #顯示參數
     model, assignment = build_model(**input_data)
     solver, status = solve_schedule(model, max_time=5)
 
