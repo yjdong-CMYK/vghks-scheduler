@@ -42,7 +42,7 @@ def build_model(
     shifts = list(shift_requirements.keys())
     workdays = [d for d in days if d not in selected_holidays]
     holidays = [d for d in days if d in selected_holidays]
-
+    scale = 100
     # 建立變數
     for p in people:
         for d in days:
@@ -162,7 +162,6 @@ def build_model(
             shift_requirements[s]["holiday"] * len(last_holidays) for s in shifts
         )
         
-        scale = 100
         avg_workday = total_workday_shifts * scale // len(people)
         avg_holiday = total_holiday_shifts * scale // len(people)
         avg_total = total_shifts * scale // len(people)
