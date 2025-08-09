@@ -43,6 +43,7 @@ def build_model(
     workdays = [d for d in days if d not in selected_holidays]
     holidays = [d for d in days if d in selected_holidays]
     scale = 100
+
     # 建立變數
     for p in people:
         for d in days:
@@ -199,7 +200,7 @@ def build_model(
                             continue
                         avg_shift = total_shift * scale // len(people)
                         count = sum(assignment[(p, d, s)] for d in d_list) * scale
-                        dev_shift = model.NewIntVar(0, total_shift, f"dev_{p}_{s}_{d_type}")
+                        dev_shift = model.NewIntVar(0, total_shift * scale, f"dev_{p}_{s}_{d_type}")
                         model.AddAbsEquality(dev_shift, count - avg_shift)
                         total_shift_balance_vars.append(dev_shift)
 
