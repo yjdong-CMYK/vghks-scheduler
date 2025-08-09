@@ -730,7 +730,7 @@ for p in people:
                     default=shifts,
                     key=f"{p}_{d}_shifts",
                 )
-                prefer_shifts.append({"date": d, "shift": s})
+                prefer_shifts.append({"date": d, "shift": selected_shifts})
     with col2:
         selected_dates = st.multiselect(
             f"要預假的日期", days, key=f"select_unavailable_date_{p}"
@@ -744,7 +744,7 @@ for p in people:
                     default=shifts,
                     key=f"{p}_{d}_shifts",
                 )
-                prefer_no_shifts.append({"date": d, "shift": s})
+                prefer_no_shifts.append({"date": d, "shift": prefer_no_shifts})
     # 結構化
     person_constraints[p] = {
         "available_shifts": available_shifts,
