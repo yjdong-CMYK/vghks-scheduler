@@ -112,7 +112,7 @@ def build_model(
     # global_settings: evenly_distribute_before_holiday_1 鼓勵平均分配每個人假日前一天的值班的次數
     # global_settings: evenly_distribute_before_holiday_2 鼓勵平均分配每個人假日前兩天的值班的次數
     # global_settings: evenly_distribute_last_holiday 平均分配最後一天假日的值班次數
-    
+
     # 收集所有偏差變數
     total_shift_balance_vars  = []
     holiday_adjacent_balance_vars = []
@@ -732,7 +732,7 @@ for p in people:
                     default=shifts,
                     key=f"{p}_{d}_shifts",
                 )
-                prefer_shifts.append({"date": d, "shift": s})
+                prefer_shifts.append({"date": d, "shift": selected_shifts})
     with col2:
         selected_dates = st.multiselect(
             f"要預假的日期", days, key=f"select_unavailable_date_{p}"
@@ -746,7 +746,7 @@ for p in people:
                     default=shifts,
                     key=f"{p}_{d}_shifts",
                 )
-                prefer_no_shifts.append({"date": d, "shift": s})
+                prefer_no_shifts.append({"date": d, "shift": selected_shifts})
     # 結構化
     person_constraints[p] = {
         "available_shifts": available_shifts,
