@@ -319,11 +319,10 @@ def build_model(
         # person_preferences：rest_at_least_2_days 休假至少連續兩天，忽略月初月底
         if person_preferences.get(p, {}).get("rest_at_least_2_days", False):
           for i in range(len(days)):
-              prev_rest = is_rest[(p, days[i-1])] if i > 0 else None
-              next_rest = is_rest[(p, days[i+1])] if i < len(days) - 1 else None
-              # 如果當天是休假，則必須有前一天或後一天也是休假
-              if prev_rest and next_rest:
-                  model.AddBoolOr([prev_rest, next_rest]).OnlyEnforceIf(is_rest[(p, days[i])])
+              if 0 < i < len(days) - 1:
+              prev_rest = is_rest[(p, days[i-1])]
+              next_rest = is_rest[(p, days[i+1])]
+              model.AddBoolOr([prev_rest, next_rest]).OnlyEnforceIf(is_rest[(p, days[i])])
 
 
     weights = {
