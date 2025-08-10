@@ -707,14 +707,7 @@ for p in people:
                         prefer = st.checkbox(
                             f"偏好連續上{shift}", value=True, key=f"{p}_pref_{shift}"
                         )
-                        # 偏好連休
-                        prefer_rests_streak = st.checkbox(
-                            f"偏好連休（班會變密集）", value=True, key=f"{p}_pref_streak_rest"
-                        )
-                        # 休假至少連續兩天
-                        rest_at_least_2_days = st.checkbox(
-                            f"休假至少連續兩天", value=True, key=f"{p}_rest_2_days"
-                        )
+                        
                     else:
                         shifts_streak_limit = 1
                         prefer = False
@@ -722,7 +715,15 @@ for p in people:
                         rest_at_least_2_days = False
                     max_shifts_streak[shift] = shifts_streak_limit
                     prefer_shifts_streak[shift] = prefer
-    
+            if min_gap_days == 0:
+                # 偏好連休
+                prefer_rests_streak = st.checkbox(
+                            f"偏好連休（班會變密集）", value=True, key=f"{p}_pref_streak_rest"
+                        )
+                # 休假至少連續兩天
+                rest_at_least_2_days = st.checkbox(
+                            f"休假至少連續兩天", value=True, key=f"{p}_rest_2_days"
+                        )
     # 排班日 / 禁排日
     col1, col2 = st.columns(2)
     with col1:
