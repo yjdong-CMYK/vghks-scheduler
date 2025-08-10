@@ -671,6 +671,8 @@ for p in people:
     max_shifts_hd = {}
     max_shifts_streak = {}
     prefer_shifts_streak = {}
+    prefer_rests_streak = False
+    rest_at_least_2_days = False
     if not ((min_gap_days != 0) and evenly_distribute_total):
         with st.expander("班數限制與偏好", expanded=True):
             cols = st.columns(len(available_shifts))
@@ -705,19 +707,22 @@ for p in people:
                         prefer = st.checkbox(
                             f"偏好連續上{shift}", value=True, key=f"{p}_pref_{shift}"
                         )
-                    else:
-                        shifts_streak_limit = 1
-                        prefer = False
-                    max_shifts_streak[shift] = shifts_streak_limit
-                    prefer_shifts_streak[shift] = prefer
-    # 偏好連休
-    prefer_rests_streak = st.checkbox(
+                        # 偏好連休
+                        prefer_rests_streak = st.checkbox(
         f"偏好連休（班會變密集）", value=True, key=f"{p}_pref_rest"
     )
     # 休假至少連續兩天
-    rest_at_least_2_days = st.checkbox(
+                        rest_at_least_2_days = st.checkbox(
         f"休假至少連續兩天", value=True, key=f"{p}_rest_2_days"
     )
+                    else:
+                        shifts_streak_limit = 1
+                        prefer = False
+                        prefer_rests_streak = False
+                        rest_at_least_2_days = False
+                    max_shifts_streak[shift] = shifts_streak_limit
+                    prefer_shifts_streak[shift] = prefer
+    
     # 排班日 / 禁排日
     col1, col2 = st.columns(2)
     with col1:
