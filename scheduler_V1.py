@@ -295,8 +295,9 @@ def add_person_preferences(model, params: ScheduleParams, assignment, is_rest):
         prefs = params.person_preferences.get(p, {})
 
         # 喜好連續上同班
-        if prefs.get("prefer_shifts_streak", False):
-            for s in params.shifts:
+        streak_prefs = prefs.get("prefer_shifts_streak", {})
+        for s in params.shifts:
+            if streak_prefs.get("s", False):
                 for i in range(len(params.days) - 1):
                     d1, d2 = params.days[i], params.days[i+1]
                     both_on = model.NewBoolVar(f"{p}_{s}_streak_{d1}_{d2}")
